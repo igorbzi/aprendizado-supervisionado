@@ -1,5 +1,5 @@
 import pandas as pd
-from sklearn.preprocessing import OneHotEncoder, KBinsDiscretizer, MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder, KBinsDiscretizer, MinMaxScaler, StandardScaler
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -22,24 +22,21 @@ print(data.info())
 # ETAPA 1 - Limpeza dos dados e análise inicial
 # Remove null values from actual_productivity_score column
 data = data.dropna(subset=['actual_productivity_score'])
-data = data.drop(['age','social_platform_preference', 'uses_focus_apps', 'has_digital_wellbeing_enabled', 'breaks_during_work'], axis=1)
+data = data.drop(['age', 'gender', 'job_type', 'social_platform_preference', 'number_of_notifications', 'uses_focus_apps', 'has_digital_wellbeing_enabled', 'coffee_consumption_per_day', 'days_feeling_burnout_per_month', 'weekly_offline_hours'], axis=1)
 
 # Identificando colunas numéricas (contínuas) e categóricas
 continuous_columns = data.select_dtypes(include=['float64']).columns.tolist()
 int_columns = data.select_dtypes(include=['int64']).columns.tolist()
-categorical_columns = ['job_type']
 
-# Identify and remove outliers using IQR method
-for column in continuous_columns:
-    Q1 = data[column].quantile(0.25)
-    Q3 = data[column].quantile(0.75)
-    IQR = Q3 - Q1
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
-    data = data[~((data[column] < lower_bound) | (data[column] > upper_bound))]
-
-print("\nInformações do dataset após remoção de outliers:")
-print(data.info())
+# # Remove outliers from numeric columns
+# numeric_columns = continuous_columns + int_columns
+# for column in ['daily_social_media_time']:
+#     Q1 = data[column].quantile(0.25)
+#     Q3 = data[column].quantile(0.75)
+#     IQR = Q3 - Q1
+#     lower_bound = Q1 - 1.5 * IQR
+#     upper_bound = Q3 + 1.5 * IQR
+#     data = data[(data[column] >= lower_bound) & (data[column] <= upper_bound)]
 
 # Verificando valores faltantes em todas as colunas após remoção
 missing_values = data.isnull().sum()
@@ -57,19 +54,25 @@ data[continuous_columns] = float_imputer.fit_transform(data[continuous_columns])
 int_imputer = SimpleImputer(strategy='median')
 data[int_columns] = float_imputer.fit_transform(data[int_columns])
 
-# Create categorical pipeline for job_type
-onehot = OneHotEncoder(sparse_output=False, drop='first')
-job_type_encoded = onehot.fit_transform(data[categorical_columns])
-
 print("\nDados após imputação:")
 print(data.info())
 
 # ETAPA 2 - Tratamento e descrição dos de dados
 
-# Transformando actual_productivity_score em categorias
-kbd = KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile')
-data['productivity_category'] = kbd.fit_transform(data[['actual_productivity_score']])
+# Usando KBinsDiscretizer para categorizar actual_productivity_score em 5 faixas
+kbins = KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile')
+data['productivity_category'] = kbins.fit_transform(data[['actual_productivity_score']])
 data['productivity_category'] = data['productivity_category'].astype(int)
+
+# Map numeric categories to descriptive labels
+category_mapping = {
+    0: 'Very Low',
+    1: 'Low',
+    2: 'Medium',
+    3: 'High',
+    4: 'Very High'
+}
+data['productivity_category'] = data['productivity_category'].map(category_mapping)
 
 # Mostrando a distribuição das categorias
 print("\nDistribuição das categorias de produtividade:")
@@ -84,16 +87,14 @@ features = data.drop(['productivity_category', 'actual_productivity_score'], axi
 target = data['productivity_category']
 
 # Dividindo os dados em treino e teste
-X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(features, target, train_size=0.7, test_size=0.2, random_state=42)
 
 # Criando pipeline de pré-processamento
 numeric_features = features.select_dtypes(include=['float64', 'int64']).columns
 categorical_features = features.select_dtypes(include=['object']).columns
-
 preprocessor = ColumnTransformer(
     transformers=[
-        ('num', MinMaxScaler(), numeric_features),
-        ('cat', OneHotEncoder(drop='first', sparse_output=False), categorical_features)
+        ('num', StandardScaler(), numeric_features),
     ])
 
 # Treinando DecisionTreeClassifier
@@ -110,7 +111,11 @@ print("\nDecision Tree Accuracy:", dt_score)
 # Treinando MLPClassifier
 mlp_pipeline = Pipeline([
     ('preprocessor', preprocessor),
-    ('classifier', MLPClassifier(random_state=42, max_iter=1000))
+    ('classifier', MLPClassifier(
+    activation='relu',
+    solver='adam',
+    max_iter=10000,
+    random_state=42))
 ])
 
 mlp_pipeline.fit(X_train, y_train)
